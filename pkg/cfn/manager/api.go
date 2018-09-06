@@ -73,6 +73,36 @@ func (c *StackCollection) doCreateStackRequest(name string, templateBody []byte,
 	return nil
 }
 
+func (c *StackCollection) doUpdateStackRequest(name string, templateBody []byte, parameters map[string]string, withIAM bool) error {
+	input := &cloudformation.UpdateStackInput{}
+
+	input.SetStackName(name)
+	input.SetTags(c.tags)
+
+	input.SetTemplateBody(string(templateBody))
+
+	if withIAM {
+		input.SetCapabilities(aws.StringSlice([]string{cloudformation.CapabilityCapabilityIam}))
+	}
+
+	for k, v := range parameters {
+		p := &cloudformation.Parameter{
+			ParameterKey:   aws.String(k),
+			ParameterValue: aws.String(v),
+		}
+		input.Parameters = append(input.Parameters, p)
+	}
+
+	logger.Debug("input = %#v", input)
+	s, err := c.cfn.UpdateStack(input)
+	if err != nil {
+		return errors.Wrap(err, fmt.Sprintf("updating CloudFormation stack %q", name))
+	}
+	logger.Debug("stack = %#v", s)
+
+	return nil
+}
+
 // CreateStack with given name, stack builder instance and parameters;
 // any errors will be written to errs channel, when nil is written,
 // assume completion, do not expect more then one error value on the
@@ -89,6 +119,23 @@ func (c *StackCollection) CreateStack(name string, stack builder.ResourceSet, pa
 	}
 
 	go c.waitUntilStackIsCreated(name, stack, errs)
+
+	return nil
+}
+
+func (c *StackCollection) UpdateStack(name string, stack builder.ResourceSet, parameters map[string]string, errs chan error) error {
+	templateBody, err := stack.RenderJSON()
+	if err != nil {
+		return errors.Wrapf(err, "rendering template for %q stack", name)
+	}
+	logger.Debug("templateBody = %s", string(templateBody))
+
+	if err := c.doUpdateStackRequest(name, templateBody, parameters, stack.WithIAM()); err != nil {
+		return err
+	}
+
+	//TODO: waitUntilStackIsUpdated
+	//go c.waitUntilStackIsCreated(name, stack, errs)
 
 	return nil
 }
